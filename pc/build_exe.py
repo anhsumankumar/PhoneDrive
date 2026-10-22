@@ -15,7 +15,9 @@ def build():
     pc_dir = Path(__file__).resolve().parent
     root_dir = pc_dir.parent
     dist_dir = root_dir / "web-dashboard" / "dist"
-    icon_path = pc_dir / "icon.png"
+    icon_ico = pc_dir / "icon.ico"
+    icon_png = pc_dir / "icon.png"
+    icon_to_use = icon_ico if icon_ico.exists() else icon_png
 
     if not dist_dir.exists():
         print("[!] Web dashboard dist folder not found. Building web dashboard first...")
@@ -26,9 +28,9 @@ def build():
         "--name=PhoneDrive-PC",
         "--noconfirm",
         "--windowed",
-        f"--icon={icon_path}",
+        f"--icon={icon_to_use}",
         f"--add-data={dist_dir};web-dashboard/dist",
-        f"--add-data={icon_path};.",
+        f"--add-data={icon_png};.",
         "--hidden-import=uvicorn.logging",
         "--hidden-import=uvicorn.loops",
         "--hidden-import=uvicorn.loops.auto",
@@ -38,10 +40,15 @@ def build():
         "--hidden-import=uvicorn.lifespan.on",
         "--hidden-import=fastapi",
         "--hidden-import=pydantic",
+        "--hidden-import=starlette",
+        "--hidden-import=multipart",
         "--hidden-import=PIL",
-        "--hidden-import=cv2",
+        "--hidden-import=PIL.Image",
         "--hidden-import=qrcode",
         "--hidden-import=PySide6",
+        "--hidden-import=PySide6.QtCore",
+        "--hidden-import=PySide6.QtGui",
+        "--hidden-import=PySide6.QtWidgets",
         str(pc_dir / "app.py"),
     ]
 

@@ -7,6 +7,7 @@ android/captures/
 *.apk
 *.aab
 *.ap_
+release-assets/
 
 # Node and web dependencies
 web-dashboard/node_modules/

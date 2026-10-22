@@ -1,12 +1,24 @@
 import os
+import sys
 import socket
 from pathlib import Path
 
 # Paths
-BASE_DIR = Path(__file__).resolve().parent
-ROOT_DIR = BASE_DIR.parent
-WEB_DIST_DIR = ROOT_DIR / "web-dashboard" / "dist"
-ICON_PATH = BASE_DIR / "icon.png"
+if getattr(sys, "frozen", False):
+    # Running in a PyInstaller bundle
+    BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    ROOT_DIR = BASE_DIR
+    WEB_DIST_DIR = BASE_DIR / "web-dashboard" / "dist"
+    if not WEB_DIST_DIR.exists():
+        WEB_DIST_DIR = Path(sys.executable).parent / "web-dashboard" / "dist"
+    ICON_PATH = BASE_DIR / "icon.png"
+    if not ICON_PATH.exists():
+        ICON_PATH = Path(sys.executable).parent / "icon.png"
+else:
+    BASE_DIR = Path(__file__).resolve().parent
+    ROOT_DIR = BASE_DIR.parent
+    WEB_DIST_DIR = ROOT_DIR / "web-dashboard" / "dist"
+    ICON_PATH = BASE_DIR / "icon.png"
 
 # App Data Directory
 APP_DATA_DIR = Path(os.path.expanduser("~")) / ".phonedrive_pc"
