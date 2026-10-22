@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/anhsumankumar/PhoneDrive/releases/latest"><img src="https://img.shields.io/github/v/release/anhsumankumar/PhoneDrive?style=for-the-badge&color=6366f1&label=Release" alt="Latest Release" /></a>
+  <a href="https://github.com/anhsumankumar/PhoneDrive/releases/latest"><img src="https://img.shields.io/badge/Release-v1.0.0-6366f1?style=for-the-badge&logo=github&logoColor=white" alt="Latest Release v1.0.0" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-emerald?style=for-the-badge" alt="License MIT" /></a>
   <a href="https://github.com/anhsumankumar/PhoneDrive"><img src="https://img.shields.io/badge/Android-15%2B%20(API%2035)-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android" /></a>
   <a href="https://github.com/anhsumankumar/PhoneDrive"><img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows" /></a>
