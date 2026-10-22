@@ -1,0 +1,39 @@
+# Built binaries and output
+android/.gradle/
+android/build/
+android/*/build/
+android/local.properties
+android/captures/
+*.apk
+*.aab
+*.ap_
+
+# Node and web dependencies
+web-dashboard/node_modules/
+web-dashboard/.pnp
+web-dashboard/.pnp.js
+web-dashboard/dist/
+
+# Python & Desktop build artifacts
+**/__pycache__/
+*.py[cod]
+*$py.class
+pc/build/
+pc/dist/
+*.spec
+venv/
+.env
+
+# Local databases and caches
+*.db
+*.sqlite
+*.sqlite3
+phonedrive_dump.db
+.tempmediaStorage/
+
+# IDE and OS files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
