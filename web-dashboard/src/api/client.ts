@@ -1,4 +1,15 @@
-import type { FileItem, FolderItem, StorageStatus, MediaItem, MediaTrack, MediaLibraryData, PlaybackProgress } from '../types'
+import type {
+  FileItem,
+  FolderItem,
+  StorageStatus,
+  MediaItem,
+  MediaTrack,
+  MediaLibraryData,
+  PlaybackProgress,
+  MusicLibraryData,
+  MusicTrack,
+  MusicPlaylist,
+} from '../types'
 
 const TOKEN_KEY = 'phonedrive_token'
 
@@ -237,11 +248,13 @@ export const api = {
       audioTrack?: number
       direct?: boolean
       quality?: string
+      mode?: 'direct' | 'remux' | 'transcode_audio' | 'transcode_full'
     }
   ): string {
     const token = getToken()
     const url = new URL(`/api/v1/media/${encodeURIComponent(mediaId)}/stream`, window.location.origin)
     if (token) url.searchParams.set('token', token)
+    if (options?.mode) url.searchParams.set('mode', options.mode)
     if (options?.transcode) url.searchParams.set('transcode', '1')
     if (options?.direct) url.searchParams.set('direct', '1')
     if (options?.start !== undefined && options.start > 0) url.searchParams.set('start', options.start.toString())
@@ -306,4 +319,106 @@ export const api = {
     })
     return handleResponse<{ isWatchlisted: boolean }>(res)
   },
+
+  // ----------------- MUSIC STREAMING CLIENT APIS -----------------
+  async getMusicLibrary(search?: string): Promise<MusicLibraryData> {
+    const url = new URL('/api/v1/music/library', window.location.origin)
+    if (search) url.searchParams.set('search', search)
+    const res = await fetch(url.toString(), {
+      headers: { ...getAuthHeaders() },
+    })
+    return handleResponse<MusicLibraryData>(res)
+  },
+
+  getTrackArtworkUrl(trackId: string): string {
+    const token = getToken()
+    const url = new URL(`/api/v1/music/tracks/${encodeURIComponent(trackId)}/artwork`, window.location.origin)
+    if (token) url.searchParams.set('token', token)
+    return url.toString()
+  },
+
+  getTrackStreamUrl(trackId: string): string {
+    const token = getToken()
+    const url = new URL(`/api/v1/music/tracks/${encodeURIComponent(trackId)}/stream`, window.location.origin)
+    if (token) url.searchParams.set('token', token)
+    return url.toString()
+  },
+
+  async getMusicPlaylists(): Promise<MusicPlaylist[]> {
+    const res = await fetch('/api/v1/music/playlists', {
+      headers: { ...getAuthHeaders() },
+    })
+    return handleResponse<MusicPlaylist[]>(res)
+  },
+
+  async createMusicPlaylist(name: string): Promise<MusicPlaylist> {
+    const res = await fetch('/api/v1/music/playlists', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders(),
+      },
+      body: JSON.stringify({ name }),
+    })
+    return handleResponse<MusicPlaylist>(res)
+  },
+
+  async renameMusicPlaylist(playlistId: string, name: string): Promise<void> {
+    await fetch(`/api/v1/music/playlists/${encodeURIComponent(playlistId)}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders(),
+      },
+      body: JSON.stringify({ name }),
+    })
+  },
+
+  async deleteMusicPlaylist(playlistId: string): Promise<void> {
+    await fetch(`/api/v1/music/playlists/${encodeURIComponent(playlistId)}`, {
+      method: 'DELETE',
+      headers: { ...getAuthHeaders() },
+    })
+  },
+
+  async getPlaylistTracks(playlistId: string): Promise<MusicTrack[]> {
+    const res = await fetch(`/api/v1/music/playlists/${encodeURIComponent(playlistId)}/tracks`, {
+      headers: { ...getAuthHeaders() },
+    })
+    return handleResponse<MusicTrack[]>(res)
+  },
+
+  async addTrackToPlaylist(playlistId: string, trackId: string): Promise<void> {
+    await fetch(`/api/v1/music/playlists/${encodeURIComponent(playlistId)}/tracks`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders(),
+      },
+      body: JSON.stringify({ trackId }),
+    })
+  },
+
+  async removeTrackFromPlaylist(playlistId: string, trackId: string): Promise<void> {
+    await fetch(`/api/v1/music/playlists/${encodeURIComponent(playlistId)}/tracks/${encodeURIComponent(trackId)}`, {
+      method: 'DELETE',
+      headers: { ...getAuthHeaders() },
+    })
+  },
+
+  async toggleMusicFavorite(trackId: string): Promise<{ isFavorite: boolean }> {
+    const res = await fetch(`/api/v1/music/favorites/${encodeURIComponent(trackId)}`, {
+      method: 'POST',
+      headers: { ...getAuthHeaders() },
+    })
+    return handleResponse<{ isFavorite: boolean }>(res)
+  },
+
+  async recordMusicHistory(trackId: string): Promise<void> {
+    await fetch(`/api/v1/music/history/${encodeURIComponent(trackId)}`, {
+      method: 'POST',
+      headers: { ...getAuthHeaders() },
+    })
+  },
 }
+

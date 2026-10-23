@@ -93,6 +93,45 @@ class Database:
                 )
             """)
 
+            # Music Playlists
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS playlists (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )
+            """)
+
+            # Playlist Tracks
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS playlist_tracks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    playlist_id TEXT NOT NULL,
+                    track_id TEXT NOT NULL,
+                    track_order INTEGER NOT NULL DEFAULT 0,
+                    added_at INTEGER NOT NULL,
+                    FOREIGN KEY(playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
+                )
+            """)
+
+            # Music Favorites
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS music_favorites (
+                    track_id TEXT PRIMARY KEY,
+                    added_at INTEGER NOT NULL
+                )
+            """)
+
+            # Music Play History
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS music_history (
+                    track_id TEXT PRIMARY KEY,
+                    played_at INTEGER NOT NULL,
+                    play_count INTEGER NOT NULL DEFAULT 1
+                )
+            """)
+
             conn.commit()
 
     # ---------------- FOLDERS ----------------
@@ -325,3 +364,130 @@ class Database:
                 "SELECT * FROM activity_logs ORDER BY created_at DESC LIMIT ?", (limit,)
             ).fetchall()
             return [dict(r) for r in rows]
+
+    # ---------------- MUSIC: PLAYLISTS, FAVORITES & HISTORY ----------------
+    def get_playlists(self) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute("SELECT * FROM playlists ORDER BY updated_at DESC").fetchall()
+            result = []
+            for r in rows:
+                p_dict = dict(r)
+                # Count tracks
+                count = conn.execute("SELECT COUNT(*) as cnt FROM playlist_tracks WHERE playlist_id = ?", (p_dict["id"],)).fetchone()["cnt"]
+                p_dict["trackCount"] = count
+                result.append(p_dict)
+            return result
+
+    def create_playlist(self, name: str) -> Dict[str, Any]:
+        p_id = str(uuid.uuid4())
+        now = int(time.time() * 1000)
+        with self._get_connection() as conn:
+            conn.execute(
+                "INSERT INTO playlists (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                (p_id, name.strip() or "New Playlist", now, now)
+            )
+            conn.commit()
+        return {"id": p_id, "name": name.strip() or "New Playlist", "createdAt": now, "updatedAt": now, "trackCount": 0}
+
+    def rename_playlist(self, playlist_id: str, new_name: str) -> bool:
+        now = int(time.time() * 1000)
+        with self._get_connection() as conn:
+            cur = conn.execute(
+                "UPDATE playlists SET name = ?, updated_at = ? WHERE id = ?",
+                (new_name.strip(), now, playlist_id)
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def delete_playlist(self, playlist_id: str) -> bool:
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM playlist_tracks WHERE playlist_id = ?", (playlist_id,))
+            cur = conn.execute("DELETE FROM playlists WHERE id = ?", (playlist_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
+    def get_playlist_track_ids(self, playlist_id: str) -> List[str]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT track_id FROM playlist_tracks WHERE playlist_id = ? ORDER BY track_order ASC, added_at ASC",
+                (playlist_id,)
+            ).fetchall()
+            return [r["track_id"] for r in rows]
+
+    def add_track_to_playlist(self, playlist_id: str, track_id: str) -> bool:
+        now = int(time.time() * 1000)
+        with self._get_connection() as conn:
+            # Check if exists in playlist
+            exists = conn.execute(
+                "SELECT 1 FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?",
+                (playlist_id, track_id)
+            ).fetchone()
+            if exists:
+                return False
+            max_order = conn.execute(
+                "SELECT MAX(track_order) as m FROM playlist_tracks WHERE playlist_id = ?",
+                (playlist_id,)
+            ).fetchone()["m"]
+            next_order = (max_order + 1) if max_order is not None else 0
+            conn.execute(
+                "INSERT INTO playlist_tracks (playlist_id, track_id, track_order, added_at) VALUES (?, ?, ?, ?)",
+                (playlist_id, track_id, next_order, now)
+            )
+            conn.execute("UPDATE playlists SET updated_at = ? WHERE id = ?", (now, playlist_id))
+            conn.commit()
+            return True
+
+    def remove_track_from_playlist(self, playlist_id: str, track_id: str) -> bool:
+        now = int(time.time() * 1000)
+        with self._get_connection() as conn:
+            cur = conn.execute(
+                "DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?",
+                (playlist_id, track_id)
+            )
+            conn.execute("UPDATE playlists SET updated_at = ? WHERE id = ?", (now, playlist_id))
+            conn.commit()
+            return cur.rowcount > 0
+
+    def is_music_favorite(self, track_id: str) -> bool:
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT 1 FROM music_favorites WHERE track_id = ?", (track_id,)).fetchone()
+            return row is not None
+
+    def toggle_music_favorite(self, track_id: str) -> bool:
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT 1 FROM music_favorites WHERE track_id = ?", (track_id,)).fetchone()
+            if row:
+                conn.execute("DELETE FROM music_favorites WHERE track_id = ?", (track_id,))
+                conn.commit()
+                return False
+            else:
+                now = int(time.time() * 1000)
+                conn.execute("INSERT INTO music_favorites (track_id, added_at) VALUES (?, ?)", (track_id, now))
+                conn.commit()
+                return True
+
+    def get_music_favorites(self) -> List[str]:
+        with self._get_connection() as conn:
+            rows = conn.execute("SELECT track_id FROM music_favorites ORDER BY added_at DESC").fetchall()
+            return [r["track_id"] for r in rows]
+
+    def record_music_play(self, track_id: str):
+        now = int(time.time() * 1000)
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO music_history (track_id, played_at, play_count)
+                VALUES (?, ?, 1)
+                ON CONFLICT(track_id) DO UPDATE SET
+                    played_at = excluded.played_at,
+                    play_count = play_count + 1
+            """, (track_id, now))
+            conn.commit()
+
+    def get_recently_played_music(self, limit: int = 25) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT track_id, played_at, play_count FROM music_history ORDER BY played_at DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+

@@ -11,6 +11,10 @@ import { ImagePreviewModal } from './components/ImagePreviewModal'
 import { UploadModal } from './components/UploadModal'
 import { MediaLibraryView } from './components/MediaLibraryView'
 import { CinematicVideoPlayer } from './components/CinematicVideoPlayer'
+import { MusicPlayerProvider, useMusicPlayer } from './components/music/MusicPlayerContext'
+import { PersistentMiniPlayer } from './components/music/PersistentMiniPlayer'
+import { NowPlayingModal } from './components/music/NowPlayingModal'
+import { MusicLibraryView } from './components/music/MusicLibraryView'
 import { api, getToken, setToken } from './api/client'
 import type { FileItem, FolderItem, StorageStatus, MediaItem } from './types'
 import { isImage, isVideo, isAudio } from './utils/fileUtils'
@@ -104,6 +108,7 @@ export function buildRouteUrl(options: {
 }
 
 function PhoneDriveDashboard() {
+  const { playTrack } = useMusicPlayer()
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const urlToken = urlParams.get('token')
@@ -334,7 +339,7 @@ function PhoneDriveDashboard() {
   const fetchFiles = useCallback(
     async (bypassCache: boolean = false) => {
       if (!isAuthenticated) return
-      if (currentCategory === 'cinema') return // Cinema has its own MediaLibraryView
+      if (currentCategory === 'cinema' || currentCategory === 'audio') return // Cinema and Audio have their own dedicated rich views
 
       const cacheKey = `${selectedFolderId || ''}_${currentParentId || ''}_${currentCategory}_${searchQuery || ''}`
       const cached = fileCacheRef.current.get(cacheKey)
@@ -475,12 +480,19 @@ function PhoneDriveDashboard() {
           navigateTo({ watchId: fallback.id })
         })
     } else if (isAudio(file)) {
-      setMediaModalFile(file)
-      navigateTo({
-        category: currentCategory,
-        folderId: selectedFolderId,
-        parentId: currentParentId,
-        audioId: file.id,
+      playTrack({
+        id: file.id,
+        title: file.name.substring(0, file.name.lastIndexOf('.')) || file.name,
+        artist: 'Local Audio',
+        album: 'PhoneDrive Music',
+        durationMs: 0,
+        codec: file.name.split('.').pop()?.toUpperCase() || 'AUDIO',
+        lossless: ['.flac', '.wav', '.alac'].some((ext) => file.name.toLowerCase().endsWith(ext)),
+        hasArtwork: false,
+        isFavorite: false,
+        isBrowserPlayable: true,
+        size: file.size,
+        fileName: file.name,
       })
     } else if (isImage(file)) {
       setImageModalFile(file)
@@ -632,6 +644,8 @@ function PhoneDriveDashboard() {
       <div className="flex-1 flex flex-col min-w-0 lg:pl-64 overflow-hidden">
         {currentCategory === 'cinema' ? (
           <MediaLibraryView folders={folders} />
+        ) : currentCategory === 'audio' ? (
+          <MusicLibraryView />
         ) : (
           <>
             {/* Header */}
@@ -867,6 +881,12 @@ function PhoneDriveDashboard() {
           </div>
         </div>
       )}
+
+      {/* Persistent Docked Glassmorphic Mini Music Player */}
+      <PersistentMiniPlayer />
+
+      {/* Fullscreen Cinema Now Playing Modal with Live Visualizer and Equalizer */}
+      <NowPlayingModal />
     </div>
   )
 }
@@ -874,7 +894,9 @@ function PhoneDriveDashboard() {
 export function App() {
   return (
     <ErrorBoundary>
-      <PhoneDriveDashboard />
+      <MusicPlayerProvider>
+        <PhoneDriveDashboard />
+      </MusicPlayerProvider>
     </ErrorBoundary>
   )
 }

@@ -55,6 +55,7 @@ def build_executable(onefile: bool = True):
         "--hidden-import=PIL",
         "--hidden-import=PIL.Image",
         "--hidden-import=qrcode",
+        "--hidden-import=mutagen",
         "--hidden-import=PySide6",
         "--hidden-import=PySide6.QtCore",
         "--hidden-import=PySide6.QtGui",

@@ -16,9 +16,14 @@ import {
   PictureInPicture,
   Loader2,
   AlertCircle,
+  Repeat,
+  Info,
+  Gauge,
+  X,
 } from 'lucide-react'
 import type { MediaItem, MediaTrack } from '../types'
 import { api } from '../api/client'
+import { formatBytes } from '../utils/fileUtils'
 
 interface CinematicVideoPlayerProps {
   media: MediaItem
@@ -78,7 +83,13 @@ export const CinematicVideoPlayer: React.FC<CinematicVideoPlayerProps> = ({
   const [tracks, setTracks] = useState<MediaTrack[]>([])
   const [selectedSubtitle, setSelectedSubtitle] = useState<string>('off')
   const [selectedAudio, setSelectedAudio] = useState<string>('default')
-  const [subtitleSize, setSubtitleSize] = useState<'small' | 'medium' | 'large'>('medium')
+  const [subtitleSize, setSubtitleSize] = useState<'small' | 'medium' | 'large' | 'xlarge'>('medium')
+  const [subtitleDelay, setSubtitleDelay] = useState<number>(0) // in milliseconds
+
+  // Video Display Controls
+  const [aspectRatio, setAspectRatio] = useState<'auto' | '16:9' | '21:9' | '4:3' | 'fill'>('auto')
+  const [isLooping, setIsLooping] = useState<boolean>(false)
+  const [showStatsModal, setShowStatsModal] = useState<boolean>(false)
 
   // Stream URL Generator Helper (with Quality Support)
   const getStreamUrl = useCallback(
@@ -868,7 +879,12 @@ export const CinematicVideoPlayer: React.FC<CinematicVideoPlayerProps> = ({
             setError('Browser playback error: Incompatible codec or unsupported stream format.')
           }
         }}
-        className="absolute inset-0 w-full h-full object-contain z-0 pointer-events-none"
+        loop={isLooping}
+        style={{
+          objectFit: aspectRatio === 'fill' ? 'fill' : 'contain',
+          ...(aspectRatio === '16:9' ? { aspectRatio: '16/9' } : aspectRatio === '21:9' ? { aspectRatio: '21/9' } : aspectRatio === '4:3' ? { aspectRatio: '4/3' } : {}),
+        }}
+        className="absolute inset-0 w-full h-full z-0 pointer-events-none transition-all duration-300"
       >
         {/* WebVTT Subtitle Tracks */}
         {subtitleTracks.map((sub) => (
@@ -1293,16 +1309,45 @@ export const CinematicVideoPlayer: React.FC<CinematicVideoPlayerProps> = ({
                     <div className="px-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">
                       Text Size
                     </div>
-                    <div className="grid grid-cols-3 gap-1">
-                      {(['small', 'medium', 'large'] as const).map((sz) => (
+                    <div className="grid grid-cols-4 gap-1">
+                      {(['small', 'medium', 'large', 'xlarge'] as const).map((sz) => (
                         <button
                           key={sz}
                           onClick={() => setSubtitleSize(sz)}
-                          className={`py-1 rounded text-xs capitalize ${
+                          className={`py-1 rounded text-[11px] capitalize ${
                             subtitleSize === sz ? 'bg-sky-600 text-white font-semibold' : 'bg-white/5 text-gray-300 hover:bg-white/10'
                           }`}
                         >
-                          {sz}
+                          {sz === 'xlarge' ? 'XL' : sz}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Subtitle Sync / Delay Controls */}
+                  <div className="pt-2 border-t border-white/5 space-y-1">
+                    <div className="px-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider flex items-center justify-between">
+                      <span>Sync Delay</span>
+                      <span className="font-mono text-cyan-400 text-[10px]">
+                        {subtitleDelay > 0 ? `+${subtitleDelay}ms` : `${subtitleDelay}ms`}
+                      </span>
+                    </div>
+                    <div className="flex items-center space-x-1">
+                      {[-500, -100, 0, 100, 500].map((d) => (
+                        <button
+                          key={d}
+                          onClick={() => {
+                            if (d === 0) setSubtitleDelay(0)
+                            else setSubtitleDelay((prev) => prev + d)
+                            showToast(`Subtitle Delay: ${d === 0 ? '0ms' : (d > 0 ? `+${d}ms` : `${d}ms`)}`)
+                          }}
+                          className={`flex-1 py-1 rounded text-[10px] font-mono transition-colors ${
+                            d === 0
+                              ? 'bg-white/10 hover:bg-white/20 text-gray-200'
+                              : 'bg-white/5 hover:bg-white/10 text-gray-300'
+                          }`}
+                        >
+                          {d === 0 ? '0' : d > 0 ? `+${d}` : d}
                         </button>
                       ))}
                     </div>
@@ -1501,6 +1546,50 @@ export const CinematicVideoPlayer: React.FC<CinematicVideoPlayerProps> = ({
               )}
             </div>
 
+            {/* Aspect Ratio Button & Menu */}
+            <div className="relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const ratios: ('auto' | '16:9' | '21:9' | '4:3' | 'fill')[] = ['auto', '16:9', '21:9', '4:3', 'fill']
+                  const next = ratios[(ratios.indexOf(aspectRatio) + 1) % ratios.length]
+                  setAspectRatio(next)
+                  showToast(`Aspect Ratio: ${next.toUpperCase()}`)
+                }}
+                className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-colors ${
+                  aspectRatio !== 'auto' ? 'bg-sky-600 text-white' : 'text-gray-300 hover:text-white hover:bg-white/10'
+                }`}
+                title="Aspect Ratio (Auto, 16:9, 21:9, 4:3, Fill)"
+              >
+                {aspectRatio.toUpperCase()}
+              </button>
+            </div>
+
+            {/* Loop Toggle */}
+            <button
+              onClick={() => {
+                setIsLooping(!isLooping)
+                showToast(isLooping ? 'Loop Disabled' : 'Loop Enabled')
+              }}
+              className={`p-2 rounded-lg transition-colors hidden sm:block ${
+                isLooping ? 'text-sky-400 bg-sky-500/20' : 'text-gray-300 hover:text-white hover:bg-white/10'
+              }`}
+              title={isLooping ? 'Loop: ON' : 'Loop: OFF'}
+            >
+              <Repeat className="w-5 h-5" />
+            </button>
+
+            {/* Stats for Nerds / Capability Details Button */}
+            <button
+              onClick={() => setShowStatsModal(!showStatsModal)}
+              className={`p-2 rounded-lg transition-colors ${
+                showStatsModal ? 'text-sky-400 bg-sky-500/20' : 'text-gray-300 hover:text-white hover:bg-white/10'
+              }`}
+              title="Media Details & Playback Stats"
+            >
+              <Info className="w-5 h-5" />
+            </button>
+
             {/* Picture in Picture */}
             <button
               onClick={togglePip}
@@ -1521,6 +1610,68 @@ export const CinematicVideoPlayer: React.FC<CinematicVideoPlayerProps> = ({
           </div>
         </div>
       </div>
+
+      {/* STATS FOR NERDS & CAPABILITY MODAL OVERLAY */}
+      {showStatsModal && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute top-20 right-6 z-50 w-80 sm:w-96 rounded-2xl bg-slate-950/90 backdrop-blur-xl border border-sky-500/30 p-4 shadow-2xl text-white space-y-3 animate-fadeIn text-xs"
+        >
+          <div className="flex items-center justify-between pb-2 border-b border-white/10">
+            <div className="flex items-center space-x-2">
+              <Gauge className="w-4 h-4 text-sky-400" />
+              <h3 className="font-bold text-sm tracking-tight">Playback Statistics & Codecs</h3>
+            </div>
+            <button
+              onClick={() => setShowStatsModal(false)}
+              className="p-1 rounded-lg text-gray-400 hover:text-white hover:bg-white/10"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="space-y-1.5 font-mono text-[11px]">
+            <div className="flex justify-between py-0.5 border-b border-white/5">
+              <span className="text-gray-400">File Container:</span>
+              <span className="text-sky-300 font-bold uppercase">{media.container || media.name.split('.').pop()}</span>
+            </div>
+            <div className="flex justify-between py-0.5 border-b border-white/5">
+              <span className="text-gray-400">Video Codec:</span>
+              <span className="text-white font-bold">{media.videoCodec?.toUpperCase() || 'H.264 / AVC'}</span>
+            </div>
+            <div className="flex justify-between py-0.5 border-b border-white/5">
+              <span className="text-gray-400">Audio Codec:</span>
+              <span className="text-white font-bold">{media.audioCodec?.toUpperCase() || 'AAC Stereo'}</span>
+            </div>
+            <div className="flex justify-between py-0.5 border-b border-white/5">
+              <span className="text-gray-400">Resolution & FPS:</span>
+              <span className="text-white">
+                {media.width && media.height ? `${media.width}x${media.height}` : media.resolution} @ {media.fps || 24} fps
+              </span>
+            </div>
+            <div className="flex justify-between py-0.5 border-b border-white/5">
+              <span className="text-gray-400">Color Depth & HDR:</span>
+              <span className="text-emerald-400 font-semibold">
+                {media.bitDepth || 8}-bit {media.hdrType || (media.isHdr ? 'HDR10' : 'SDR')}
+              </span>
+            </div>
+            <div className="flex justify-between py-0.5 border-b border-white/5">
+              <span className="text-gray-400">Active Stream Mode:</span>
+              <span className="text-amber-300 font-bold">
+                {useCompatibilityMode ? 'Real-time H.264/AAC Transcode' : 'Direct Range 206 Stream'}
+              </span>
+            </div>
+            <div className="flex justify-between py-0.5 border-b border-white/5">
+              <span className="text-gray-400">Buffer Health:</span>
+              <span className="text-sky-400">{bufferedPercent.toFixed(1)}%</span>
+            </div>
+            <div className="flex justify-between py-0.5">
+              <span className="text-gray-400">File Size:</span>
+              <span className="text-gray-300">{formatBytes(media.size)}</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

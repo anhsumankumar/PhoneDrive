@@ -42,7 +42,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'cinema', label: 'Cinema & Shows', icon: Tv },
     { id: 'photos', label: 'Photos', icon: Image },
     { id: 'videos', label: 'Videos', icon: Film },
-    { id: 'audio', label: 'Audio', icon: Music },
+    { id: 'audio', label: 'Music & Audio', icon: Music },
     { id: 'documents', label: 'Documents', icon: FileText },
     { id: 'favorites', label: 'Favorites', icon: Star },
     { id: 'recent', label: 'Recent', icon: Clock },

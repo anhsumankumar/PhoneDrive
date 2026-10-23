@@ -1,4 +1,5 @@
 import os
+import re
 import mimetypes
 import base64
 import platform
@@ -15,6 +16,7 @@ from config import WEB_DIST_DIR, get_local_ip
 from database import Database
 from thumbnail_engine import ThumbnailEngine
 from media_engine import MediaEngine
+from music_engine import MusicEngine
 from qr_generator import generate_qr_bytes
 
 app = FastAPI(title="PhoneDrive PC Server", version="1.0.0")
@@ -68,10 +70,16 @@ def is_image(p: Path) -> bool:
     return p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".svg")
 
 def is_video(p: Path) -> bool:
-    return p.suffix.lower() in (".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v", ".flv", ".wmv")
+    return p.suffix.lower() in (
+        ".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v", ".flv", ".wmv",
+        ".ts", ".m2ts", ".vob", ".3gp", ".ogv", ".mpg", ".mpeg", ".mxf"
+    )
 
 def is_audio(p: Path) -> bool:
-    return p.suffix.lower() in (".mp3", ".m4a", ".wav", ".aac", ".ogg", ".flac", ".opus")
+    return p.suffix.lower() in (
+        ".mp3", ".m4a", ".wav", ".aac", ".ogg", ".flac", ".opus",
+        ".wma", ".aiff", ".aif", ".alac", ".ape", ".wv"
+    )
 
 def is_document(p: Path) -> bool:
     return p.suffix.lower() in (".pdf", ".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".tar", ".gz")
@@ -503,9 +511,24 @@ async def get_media_details(media_id: str, request: Request):
             "resolution": probe["resolution"],
             "width": probe["width"],
             "height": probe["height"],
-            "videoCodec": probe["videoCodec"],
-            "audioCodec": probe["audioCodec"],
-            "isBrowserNative": probe["isBrowserNative"],
+            "fps": probe.get("fps", 24.0),
+            "aspectRatio": probe.get("aspectRatio", "16:9"),
+            "container": probe.get("container", file_path.suffix.lstrip(".")),
+            "containerLongName": probe.get("containerLongName", ""),
+            "videoCodec": probe.get("videoCodec", ""),
+            "videoCodecLongName": probe.get("videoCodecLongName", ""),
+            "videoBitrate": probe.get("videoBitrate", 0),
+            "audioCodec": probe.get("audioCodec", ""),
+            "audioCodecLongName": probe.get("audioCodecLongName", ""),
+            "audioBitrate": probe.get("audioBitrate", 0),
+            "bitDepth": probe.get("bitDepth", 8),
+            "pixFmt": probe.get("pixFmt", "yuv420p"),
+            "isHdr": probe.get("isHdr", False),
+            "hdrType": probe.get("hdrType", "SDR"),
+            "overallBitrate": probe.get("overallBitrate", 0),
+            "isBrowserNative": probe.get("isBrowserNative", False),
+            "playbackStrategy": probe.get("playbackStrategy", "transcode_full"),
+            "strategyReason": probe.get("strategyReason", ""),
             "size": stat.st_size,
             "tracks": probe["subtitleTracks"],
             "audioTracks": probe["audioTracks"],
@@ -589,7 +612,7 @@ async def get_media_subtitles(media_id: str, track_id: str, request: Request):
 
     return Response(content=content, media_type="text/vtt; charset=utf-8")
 
-# ----------------- SMART VIDEO STREAMING (DIRECT OR TRANSCODED) -----------------
+# ----------------- SMART VIDEO STREAMING (DIRECT, REMUX, TRANSCODE) -----------------
 @app.get("/api/v1/media/{media_id}/stream")
 async def stream_media(
     media_id: str,
@@ -598,7 +621,8 @@ async def stream_media(
     transcode: Optional[str] = Query(None),
     audioTrack: Optional[int] = Query(None),
     direct: Optional[str] = Query(None),
-    quality: Optional[str] = Query(None)
+    quality: Optional[str] = Query(None),
+    mode: Optional[str] = Query(None)  # "direct", "remux", "transcode_audio", "transcode_full"
 ):
     require_auth(request)
     file_path = decode_path_id(media_id)
@@ -607,19 +631,21 @@ async def stream_media(
 
     probe = MediaEngine.probe_media(file_path)
     is_native = probe.get("isBrowserNative", False)
-    force_direct = (direct == "1")
+    force_direct = (direct == "1") or (mode == "direct")
     has_specific_quality = bool(quality and quality.lower() not in ("auto", "original"))
 
-    # If the file is NOT browser native (e.g. MKV, HEVC, AC3, DTS) OR transcode is requested OR specific quality is requested:
-    # Stream real-time browser-compatible fragmented MP4 (H.264 + AAC Stereo)
-    should_transcode = (not is_native and not force_direct) or (transcode == "1") or has_specific_quality
-    if should_transcode:
+    # Capability-driven playback selection:
+    # Direct stream if explicitly requested or natively compatible without transcode/quality request
+    effective_strategy = mode or probe.get("playbackStrategy", "direct" if is_native else "transcode_full")
+
+    if not force_direct and (effective_strategy in ("remux", "transcode_audio", "transcode_full") or transcode == "1" or has_specific_quality):
         try:
             proc = MediaEngine.create_transcode_process(
                 file_path,
                 start_sec=start,
                 audio_stream_idx=audioTrack,
-                quality=quality
+                quality=quality,
+                strategy_override=effective_strategy if effective_strategy != "direct" else None
             )
 
             def iter_stream():
@@ -644,10 +670,11 @@ async def stream_media(
                 "Accept-Ranges": "none",
                 "Cache-Control": "no-cache, no-store",
                 "X-Content-Type-Options": "nosniff",
+                "X-Playback-Mode": effective_strategy,
             }
             return StreamingResponse(iter_stream(), media_type="video/mp4", headers=headers)
         except Exception as e:
-            print(f"[!] Transcoding failed ({e}), falling back to direct stream: {file_path}")
+            print(f"[!] Processing failed ({e}), falling back to direct stream: {file_path}")
 
     # Native browser MP4 direct streaming with Range 206
     stat = file_path.stat()
@@ -816,6 +843,355 @@ async def rename_file(file_id: str, request: Request):
             "lastModified": int(stat.st_mtime * 1000),
         }
     }
+
+# ----------------- DEDICATED MUSIC STREAMING SYSTEM -----------------
+def generate_music_art_svg(title: str, artist: str) -> str:
+    palette = [
+        ("#0ea5e9", "#2563eb"),  # sky to blue
+        ("#8b5cf6", "#ec4899"),  # violet to pink
+        ("#10b981", "#06b6d4"),  # emerald to cyan
+        ("#f59e0b", "#ef4444"),  # amber to red
+        ("#6366f1", "#a855f7"),  # indigo to purple
+        ("#14b8a6", "#0284c7"),  # teal to light blue
+    ]
+    idx = sum(ord(c) for c in (title + artist)) % len(palette)
+    c1, c2 = palette[idx]
+    clean_title = (title[:22] + "...") if len(title) > 22 else title
+    clean_artist = (artist[:26] + "...") if len(artist) > 26 else artist
+
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="500" height="500">
+  <defs>
+    <linearGradient id="grad_{idx}" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="{c1}" />
+      <stop offset="100%" stop-color="{c2}" />
+    </linearGradient>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#grad_{idx})" rx="40" />
+  <circle cx="250" cy="200" r="90" fill="white" opacity="0.12" />
+  <circle cx="250" cy="200" r="45" fill="white" opacity="0.18" />
+  <path d="M240 160v65a25 25 0 1 1-18-24V175l50-12v45a25 25 0 1 1-18-24V150l-50 10z" fill="white" opacity="0.95" />
+  <text x="250" y="355" fill="white" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="28" font-weight="700" text-anchor="middle">{clean_title}</text>
+  <text x="250" y="395" fill="white" opacity="0.82" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="20" font-weight="500" text-anchor="middle">{clean_artist}</text>
+</svg>"""
+
+@app.get("/api/v1/music/library")
+async def get_music_library(request: Request, search: Optional[str] = None):
+    require_auth(request)
+    shared_folders = db.get_folders()
+    all_tracks = []
+    favorite_set = set(db.get_music_favorites())
+
+    for f in shared_folders:
+        base_p = Path(f["path"])
+        if not base_p.exists():
+            continue
+        for root, _, filenames in os.walk(base_p):
+            for fname in filenames:
+                file_p = Path(root) / fname
+                if is_audio(file_p):
+                    if search and search.lower() not in fname.lower():
+                        continue
+                    meta = MusicEngine.probe_audio(file_p)
+                    t_id = encode_path_id(file_p)
+                    stat = file_p.stat()
+
+                    all_tracks.append({
+                        "id": t_id,
+                        "title": meta["title"],
+                        "artist": meta["artist"],
+                        "album": meta["album"],
+                        "albumArtist": meta["albumArtist"],
+                        "genre": meta["genre"],
+                        "year": meta["year"],
+                        "trackNumber": meta["trackNumber"],
+                        "discNumber": meta["discNumber"],
+                        "durationMs": meta["durationMs"],
+                        "bitrate": meta["bitrate"],
+                        "sampleRate": meta["sampleRate"],
+                        "channels": meta["channels"],
+                        "codec": meta["codec"].upper(),
+                        "lossless": meta["lossless"],
+                        "hasArtwork": meta["hasArtwork"],
+                        "isFavorite": t_id in favorite_set,
+                        "isBrowserPlayable": meta["isBrowserPlayable"],
+                        "size": stat.st_size,
+                        "fileName": fname,
+                        "folderId": f["id"],
+                    })
+
+    # Group into Albums
+    album_map: Dict[str, Dict[str, Any]] = {}
+    artist_map: Dict[str, Dict[str, Any]] = {}
+    genre_map: Dict[str, int] = {}
+
+    for t in all_tracks:
+        # Album grouping
+        alb_key = f"{t['album']}___{t['artist']}"
+        if alb_key not in album_map:
+            album_map[alb_key] = {
+                "id": alb_key,
+                "name": t["album"],
+                "artist": t["artist"],
+                "year": t["year"],
+                "trackCount": 0,
+                "coverTrackId": t["id"],
+                "tracks": [],
+            }
+        album_map[alb_key]["trackCount"] += 1
+        album_map[alb_key]["tracks"].append(t)
+
+        # Artist grouping
+        art_name = t["artist"]
+        if art_name not in artist_map:
+            artist_map[art_name] = {
+                "name": art_name,
+                "trackCount": 0,
+                "albums": set(),
+                "sampleTrackId": t["id"],
+            }
+        artist_map[art_name]["trackCount"] += 1
+        artist_map[art_name]["albums"].add(t["album"])
+
+        # Genre grouping
+        g_name = t["genre"] or "Music"
+        genre_map[g_name] = genre_map.get(g_name, 0) + 1
+
+    albums_list = []
+    for alb in album_map.values():
+        alb["tracks"].sort(key=lambda x: x["trackNumber"] or 999)
+        albums_list.append(alb)
+    albums_list.sort(key=lambda x: x["name"].lower())
+
+    artists_list = [
+        {"name": k, "trackCount": v["trackCount"], "albumCount": len(v["albums"]), "sampleTrackId": v["sampleTrackId"]}
+        for k, v in sorted(artist_map.items())
+    ]
+
+    genres_list = [{"name": k, "count": v} for k, v in sorted(genre_map.items(), key=lambda x: -x[1])]
+
+    # Playlists
+    playlists = db.get_playlists()
+
+    # Recently Played
+    history = db.get_recently_played_music(limit=30)
+    track_lookup = {t["id"]: t for t in all_tracks}
+    recently_played = []
+    for h in history:
+        if h["track_id"] in track_lookup:
+            recently_played.append({
+                **track_lookup[h["track_id"]],
+                "playedAt": h["played_at"],
+                "playCount": h["play_count"],
+            })
+
+    # Favorites
+    favorites = [t for t in all_tracks if t["isFavorite"]]
+
+    return {
+        "success": True,
+        "data": {
+            "totalTracks": len(all_tracks),
+            "tracks": all_tracks,
+            "albums": albums_list,
+            "artists": artists_list,
+            "genres": genres_list,
+            "playlists": playlists,
+            "recentlyPlayed": recently_played,
+            "favorites": favorites,
+        }
+    }
+
+@app.get("/api/v1/music/tracks/{track_id}/artwork")
+async def get_track_artwork(track_id: str, request: Request):
+    require_auth(request)
+    file_path = decode_path_id(track_id)
+    if not file_path or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Track not found")
+
+    art_bytes = MusicEngine.get_album_art(file_path)
+    if art_bytes:
+        return Response(content=art_bytes, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=604800"})
+
+    # Dynamic gradient SVG fallback with track title & artist
+    probe = MusicEngine.probe_audio(file_path)
+    svg_art = generate_music_art_svg(probe["title"], probe["artist"])
+    return Response(content=svg_art, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=604800"})
+
+@app.get("/api/v1/music/tracks/{track_id}/stream")
+async def stream_track(track_id: str, request: Request):
+    require_auth(request)
+    file_path = decode_path_id(track_id)
+    if not file_path or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    probe = MusicEngine.probe_audio(file_path)
+    is_playable = probe.get("isBrowserPlayable", True)
+
+    # If format is non-browser playable (WMA, AIFF, high-spec DSD), transcode to MP3 in real-time
+    if not is_playable:
+        try:
+            proc = MusicEngine.create_audio_transcode_process(file_path, format="mp3")
+            def iter_audio():
+                try:
+                    while True:
+                        chunk = proc.stdout.read(32 * 1024)
+                        if not chunk:
+                            break
+                        yield chunk
+                finally:
+                    try:
+                        proc.terminate()
+                        proc.wait(timeout=0.5)
+                    except Exception:
+                        try: proc.kill()
+                        except Exception: pass
+
+            headers = {
+                "Content-Type": "audio/mpeg",
+                "Accept-Ranges": "none",
+                "Cache-Control": "no-cache, no-store",
+            }
+            return StreamingResponse(iter_audio(), media_type="audio/mpeg", headers=headers)
+        except Exception as e:
+            print(f"[!] Audio transcode failed ({e}), falling back to direct stream: {file_path}")
+
+    # Standard browser Range 206 audio streaming
+    stat = file_path.stat()
+    file_size = stat.st_size
+    range_header = request.headers.get("Range")
+    mime, _ = mimetypes.guess_type(str(file_path))
+    mime = mime or "audio/mpeg"
+
+    if not range_header:
+        return FileResponse(
+            path=str(file_path),
+            media_type=mime,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(file_size),
+            }
+        )
+
+    range_match = re.match(r"bytes=(\d+)-(\d*)", range_header)
+    if not range_match:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{file_size}"})
+
+    start_byte = int(range_match.group(1))
+    end_byte = int(range_match.group(2)) if range_match.group(2) else file_size - 1
+
+    if start_byte >= file_size or end_byte >= file_size or start_byte > end_byte:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{file_size}"})
+
+    chunk_length = min(2 * 1024 * 1024, end_byte - start_byte + 1)
+    effective_end = start_byte + chunk_length - 1
+
+    def iter_audio_bytes():
+        with open(file_path, "rb") as f:
+            f.seek(start_byte)
+            remaining = effective_end - start_byte + 1
+            while remaining > 0:
+                read_size = min(64 * 1024, remaining)
+                data = f.read(read_size)
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    headers = {
+        "Content-Range": f"bytes {start_byte}-{effective_end}/{file_size}",
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(chunk_length),
+        "Content-Type": mime,
+    }
+    return StreamingResponse(iter_audio_bytes(), status_code=206, headers=headers)
+
+# Music Playlists Endpoints
+@app.get("/api/v1/music/playlists")
+async def get_playlists_endpoint(request: Request):
+    require_auth(request)
+    return {"success": True, "data": db.get_playlists()}
+
+@app.post("/api/v1/music/playlists")
+async def create_playlist_endpoint(request: Request):
+    require_auth(request)
+    data = await request.json()
+    name = data.get("name", "New Playlist")
+    pl = db.create_playlist(name)
+    return {"success": True, "data": pl}
+
+@app.put("/api/v1/music/playlists/{playlist_id}")
+async def rename_playlist_endpoint(playlist_id: str, request: Request):
+    require_auth(request)
+    data = await request.json()
+    new_name = data.get("name", "")
+    ok = db.rename_playlist(playlist_id, new_name)
+    return {"success": ok, "data": None}
+
+@app.delete("/api/v1/music/playlists/{playlist_id}")
+async def delete_playlist_endpoint(playlist_id: str, request: Request):
+    require_auth(request)
+    ok = db.delete_playlist(playlist_id)
+    return {"success": ok, "data": None}
+
+@app.get("/api/v1/music/playlists/{playlist_id}/tracks")
+async def get_playlist_tracks_endpoint(playlist_id: str, request: Request):
+    require_auth(request)
+    track_ids = db.get_playlist_track_ids(playlist_id)
+    tracks = []
+    favorite_set = set(db.get_music_favorites())
+
+    for tid in track_ids:
+        p = decode_path_id(tid)
+        if p and p.is_file():
+            meta = MusicEngine.probe_audio(p)
+            tracks.append({
+                "id": tid,
+                "title": meta["title"],
+                "artist": meta["artist"],
+                "album": meta["album"],
+                "albumArtist": meta["albumArtist"],
+                "genre": meta["genre"],
+                "year": meta["year"],
+                "durationMs": meta["durationMs"],
+                "bitrate": meta["bitrate"],
+                "sampleRate": meta["sampleRate"],
+                "channels": meta["channels"],
+                "codec": meta["codec"].upper(),
+                "lossless": meta["lossless"],
+                "hasArtwork": meta["hasArtwork"],
+                "isFavorite": tid in favorite_set,
+                "isBrowserPlayable": meta["isBrowserPlayable"],
+                "size": p.stat().st_size,
+                "fileName": p.name,
+            })
+    return {"success": True, "data": tracks}
+
+@app.post("/api/v1/music/playlists/{playlist_id}/tracks")
+async def add_track_to_playlist_endpoint(playlist_id: str, request: Request):
+    require_auth(request)
+    data = await request.json()
+    track_id = data.get("trackId", "")
+    ok = db.add_track_to_playlist(playlist_id, track_id)
+    return {"success": ok, "data": None}
+
+@app.delete("/api/v1/music/playlists/{playlist_id}/tracks/{track_id}")
+async def remove_track_from_playlist_endpoint(playlist_id: str, track_id: str, request: Request):
+    require_auth(request)
+    ok = db.remove_track_from_playlist(playlist_id, track_id)
+    return {"success": ok, "data": None}
+
+# Music Favorites & History
+@app.post("/api/v1/music/favorites/{track_id}")
+async def toggle_favorite_endpoint(track_id: str, request: Request):
+    require_auth(request)
+    is_fav = db.toggle_music_favorite(track_id)
+    return {"success": True, "data": {"isFavorite": is_fav}}
+
+@app.post("/api/v1/music/history/{track_id}")
+async def record_play_endpoint(track_id: str, request: Request):
+    require_auth(request)
+    db.record_music_play(track_id)
+    return {"success": True, "data": None}
 
 # ----------------- QR CODE ENDPOINT -----------------
 @app.get("/api/v1/qr")

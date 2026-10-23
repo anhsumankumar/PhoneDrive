@@ -28,6 +28,8 @@ DB_PATH = APP_DATA_DIR / "phonedrive.db"
 CACHE_DIR = APP_DATA_DIR / "cache"
 THUMBNAILS_DIR = CACHE_DIR / "thumbnails"
 THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
+ALBUM_ART_DIR = CACHE_DIR / "album_art"
+ALBUM_ART_DIR.mkdir(parents=True, exist_ok=True)
 
 # Default Server Settings
 DEFAULT_HOST = "0.0.0.0"

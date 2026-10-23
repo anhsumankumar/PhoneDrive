@@ -10,7 +10,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from PIL import Image
 from config import THUMBNAILS_DIR
 
-MAX_CACHE_BYTES = 5 * 1024 * 1024 * 1024 # 5 GB cache quota
+MAX_CACHE_BYTES = 5 * 1024 * 1024 * 1024  # 5 GB cache quota
 
 def find_binary(binary_name: str) -> str:
     """Discovers binary across environment, project directories, and common Windows locations."""
@@ -82,17 +82,37 @@ class MediaEngine:
 
     @staticmethod
     def probe_media(file_path: Path) -> Dict[str, Any]:
-        """Probes video and audio streams using ffprobe with in-memory caching."""
+        """
+        Deep capability analysis using ffprobe:
+        Extracts container, video/audio codecs, resolution, frame rate, duration,
+        bitrates, bit depth (8/10-bit), HDR information, multi-audio tracks,
+        embedded and sidecar subtitles, and evaluates optimal playback strategy.
+        """
         if not file_path.exists() or not file_path.is_file():
             return {
+                "container": "",
+                "containerLongName": "",
                 "durationMs": 0,
+                "fileSize": 0,
+                "overallBitrate": 0,
                 "width": 0,
                 "height": 0,
                 "resolution": "",
                 "fps": 24.0,
+                "aspectRatio": "16:9",
+                "pixFmt": "",
+                "bitDepth": 8,
+                "isHdr": False,
+                "hdrType": "SDR",
                 "videoCodec": "",
+                "videoCodecLongName": "",
+                "videoBitrate": 0,
                 "audioCodec": "",
+                "audioCodecLongName": "",
+                "audioBitrate": 0,
                 "isBrowserNative": False,
+                "playbackStrategy": "transcode_full",
+                "strategyReason": "File not found",
                 "audioTracks": [],
                 "subtitleTracks": [],
             }
@@ -105,16 +125,33 @@ class MediaEngine:
         except Exception:
             cache_key = None
 
-        is_mp4_family = file_path.suffix.lower() in (".mp4", ".m4v", ".webm", ".mov")
-        result = {
+        ext = file_path.suffix.lower()
+        is_mp4_family = ext in (".mp4", ".m4v", ".webm", ".mov")
+
+        result: Dict[str, Any] = {
+            "container": ext.lstrip("."),
+            "containerLongName": "",
             "durationMs": 0,
+            "fileSize": stat.st_size if 'stat' in locals() else 0,
+            "overallBitrate": 0,
             "width": 0,
             "height": 0,
             "resolution": "",
             "fps": 24.0,
+            "aspectRatio": "16:9",
+            "pixFmt": "yuv420p",
+            "bitDepth": 8,
+            "isHdr": False,
+            "hdrType": "SDR",
             "videoCodec": "",
+            "videoCodecLongName": "",
+            "videoBitrate": 0,
             "audioCodec": "",
+            "audioCodecLongName": "",
+            "audioBitrate": 0,
             "isBrowserNative": is_mp4_family,
+            "playbackStrategy": "direct" if is_mp4_family else "transcode_full",
+            "strategyReason": "Standard browser direct play",
             "audioTracks": [],
             "subtitleTracks": [],
         }
@@ -134,15 +171,19 @@ class MediaEngine:
                 fmt = data.get("format", {})
                 duration_sec = float(fmt.get("duration", 0))
                 result["durationMs"] = int(duration_sec * 1000)
+                result["container"] = fmt.get("format_name", ext.lstrip("."))
+                result["containerLongName"] = fmt.get("format_long_name", "")
+                result["overallBitrate"] = int(fmt.get("bit_rate", 0))
 
                 video_codec = ""
                 audio_codec = ""
                 has_incompatible_audio = False
-
                 audio_idx = 0
+
                 for s in data.get("streams", []):
                     stype = s.get("codec_type")
                     cname = s.get("codec_name", "").lower()
+                    clong = s.get("codec_long_name", "")
                     tags = s.get("tags", {})
                     lang = tags.get("language") or tags.get("LANGUAGE") or "Default"
                     title = tags.get("title") or tags.get("TITLE") or f"Track {s.get('index')}"
@@ -150,8 +191,54 @@ class MediaEngine:
                     if stype == "video" and not video_codec and cname not in ("png", "jpeg", "mjpeg", "bmp"):
                         video_codec = cname
                         result["videoCodec"] = cname
+                        result["videoCodecLongName"] = clong
                         result["width"] = int(s.get("width") or 0)
                         result["height"] = int(s.get("height") or 0)
+                        result["pixFmt"] = s.get("pix_fmt", "yuv420p")
+                        result["videoBitrate"] = int(s.get("bit_rate") or 0)
+
+                        # Aspect Ratio
+                        dar = s.get("display_aspect_ratio")
+                        if dar and ":" in dar:
+                            result["aspectRatio"] = dar
+                        elif result["width"] > 0 and result["height"] > 0:
+                            ratio = result["width"] / result["height"]
+                            if abs(ratio - 16/9) < 0.05:
+                                result["aspectRatio"] = "16:9"
+                            elif abs(ratio - 2.39) < 0.15 or abs(ratio - 2.35) < 0.15:
+                                result["aspectRatio"] = "21:9"
+                            elif abs(ratio - 4/3) < 0.05:
+                                result["aspectRatio"] = "4:3"
+                            else:
+                                result["aspectRatio"] = f"{result['width']}:{result['height']}"
+
+                        # Bit Depth
+                        bits = s.get("bits_per_raw_sample")
+                        if bits:
+                            try:
+                                result["bitDepth"] = int(bits)
+                            except Exception:
+                                pass
+                        elif "10le" in result["pixFmt"] or "10be" in result["pixFmt"] or "p10" in result["pixFmt"]:
+                            result["bitDepth"] = 10
+                        elif "12le" in result["pixFmt"] or "p12" in result["pixFmt"]:
+                            result["bitDepth"] = 12
+
+                        # HDR Detection
+                        color_primaries = s.get("color_primaries", "")
+                        color_transfer = s.get("color_transfer", "")
+                        if color_primaries in ("bt2020", "arib-std-b67") or color_transfer in ("smpte2084", "arib-std-b67"):
+                            result["isHdr"] = True
+                            if color_transfer == "smpte2084":
+                                result["hdrType"] = "HDR10"
+                            elif color_transfer == "arib-std-b67":
+                                result["hdrType"] = "HLG"
+                            else:
+                                result["hdrType"] = "HDR (BT.2020)"
+                        elif "dovi" in s or "dvhe" in cname:
+                            result["isHdr"] = True
+                            result["hdrType"] = "Dolby Vision"
+
                         fps_eval = s.get("r_frame_rate", "24/1")
                         try:
                             num, den = fps_eval.split("/")
@@ -163,7 +250,12 @@ class MediaEngine:
                         if not audio_codec:
                             audio_codec = cname
                             result["audioCodec"] = cname
+                            result["audioCodecLongName"] = clong
+                            result["audioBitrate"] = int(s.get("bit_rate") or 0)
                         channels = int(s.get("channels") or 2)
+                        channel_layout = s.get("channel_layout", "stereo" if channels == 2 else f"{channels} channels")
+                        sample_rate = int(s.get("sample_rate") or 44100)
+
                         if cname in ("ac3", "eac3", "dts", "truehd", "flac") or channels > 2:
                             has_incompatible_audio = True
 
@@ -171,24 +263,28 @@ class MediaEngine:
                             "index": s.get("index"),
                             "audioIndex": audio_idx,
                             "codec": cname,
+                            "codecLongName": clong,
                             "language": lang.capitalize(),
                             "title": title,
                             "channels": channels,
+                            "channelLayout": channel_layout,
+                            "sampleRate": sample_rate,
                         })
                         audio_idx += 1
 
                     elif stype == "subtitle":
                         result["subtitleTracks"].append({
                             "id": f"embedded_{s.get('index')}",
-                            "name": f"{lang.capitalize()} - {title} (Embedded)",
+                            "name": f"{lang.capitalize()} - {title} (Embedded {cname.upper()})",
                             "language": lang,
                             "type": "SUBTITLE",
                             "isDefault": len(result["subtitleTracks"]) == 0,
                             "isEmbedded": True,
                             "streamIndex": s.get("index"),
+                            "format": cname,
                         })
 
-                # Resolution label
+                # Human-friendly Resolution label
                 h = result["height"]
                 w = result["width"]
                 if h >= 2160 or w >= 3840:
@@ -200,16 +296,36 @@ class MediaEngine:
                 elif h > 0:
                     result["resolution"] = f"{h}p"
 
-                # Check if natively browser playable (MP4 with H.264 and stereo AAC/MP3)
-                is_mp4 = file_path.suffix.lower() in (".mp4", ".m4v", ".webm")
-                is_h264 = video_codec in ("h264", "avc1")
-                is_stereo_aac = (audio_codec in ("aac", "mp3", "opus") and not has_incompatible_audio)
-                result["isBrowserNative"] = is_mp4 and is_h264 and is_stereo_aac
+                # ----------------- CAPABILITY & STRATEGY ASSIGNMENT -----------------
+                # Browser-native video criteria: MP4/WebM/MOV container, H.264 / VP9 / AV1 codec, 8-bit SDR, stereo AAC/MP3/Opus audio
+                is_native_container = ext in (".mp4", ".m4v", ".webm", ".mov")
+                is_native_video = video_codec in ("h264", "avc", "avc1") and result["bitDepth"] == 8 and not result["isHdr"]
+                is_native_audio = audio_codec in ("aac", "mp3", "opus") and not has_incompatible_audio
+
+                if is_native_container and is_native_video and is_native_audio:
+                    result["isBrowserNative"] = True
+                    result["playbackStrategy"] = "direct"
+                    result["strategyReason"] = "Compatible container and codecs: instant direct HTTP range streaming"
+                elif is_native_video and is_native_audio:
+                    # Video and audio streams are natively compatible, but container is MKV, TS, AVI
+                    result["isBrowserNative"] = False
+                    result["playbackStrategy"] = "remux"
+                    result["strategyReason"] = f"{ext.upper()[1:]} container: fast stream-copy remux into fragmented MP4 (0% CPU re-encoding)"
+                elif is_native_video and not is_native_audio:
+                    # Video is H.264 compatible, but audio is AC-3 / DTS / 5.1ch surround
+                    result["isBrowserNative"] = False
+                    result["playbackStrategy"] = "transcode_audio"
+                    result["strategyReason"] = f"Video preserved via stream copy; {audio_codec.upper()} audio transcoded to AAC stereo"
+                else:
+                    # Incompatible video (HEVC, VC-1, MPEG2, 10-bit HDR, VP8)
+                    result["isBrowserNative"] = False
+                    result["playbackStrategy"] = "transcode_full"
+                    result["strategyReason"] = f"Codec {video_codec.upper() or 'unknown'} ({result['resolution']}) requires real-time H.264 transcoding"
 
         except Exception as e:
             print(f"ffprobe error on {file_path}: {e}")
 
-        # Add sidecar subtitle files
+        # Add sidecar subtitle files (.srt, .vtt)
         sidecars = MediaEngine.find_sidecar_subtitles(file_path)
         for sc in sidecars:
             result["subtitleTracks"].append(sc)
@@ -226,49 +342,102 @@ class MediaEngine:
         file_path: Path,
         start_sec: float = 0.0,
         audio_stream_idx: Optional[int] = None,
-        quality: Optional[str] = None
+        quality: Optional[str] = None,
+        strategy_override: Optional[str] = None
     ) -> subprocess.Popen:
-        """Launches an asynchronous FFmpeg process streaming fragmented MP4 to stdout."""
-        ffmpeg_bin = MediaEngine.get_ffmpeg_cmd()
+        """
+        Creates an asynchronous FFmpeg process streaming fragmented MP4 (fMP4) to stdout.
+        Uses capability-based streaming:
+          - 'remux': Stream-copy video and audio (0% CPU, instant start)
+          - 'transcode_audio': Stream-copy video, transcode audio to AAC stereo
+          - 'transcode_full': Full x264 video transcode + AAC audio with hardware-assisted zero latency
+        """
+        probe = MediaEngine.probe_media(file_path)
+        video_codec = probe.get("videoCodec", "").lower()
+        strategy = strategy_override or probe.get("playbackStrategy", "transcode_full")
+
         cmd = [
-            ffmpeg_bin,
+            MediaEngine.get_ffmpeg_cmd(),
             "-hide_banner",
             "-loglevel", "error",
             "-y",
         ]
 
+        # Fast keyframe seek before input
         if start_sec > 0:
             cmd.extend(["-ss", f"{start_sec:.2f}"])
 
-        cmd.extend(["-i", str(file_path.resolve())])
+        cmd.extend([
+            "-i", str(file_path.resolve()),
+            "-map", "0:v:0",
+        ])
 
-        # Map video
-        cmd.extend(["-map", "0:v:0"])
-
-        # Map audio
+        # Map audio track
         if audio_stream_idx is not None and audio_stream_idx >= 0:
-            cmd.extend(["-map", f"0:a:{audio_stream_idx}?"])
+            cmd.extend(["-map", f"0:{audio_stream_idx}"])
         else:
             cmd.extend(["-map", "0:a:0?"])
 
-        # Scale if quality requested
-        scale_map = {
-            "480p": "scale=-2:480",
-            "720p": "scale=-2:720",
-            "1080p": "scale=-2:1080",
+        # Determine if scaling or quality is requested
+        QUALITY_PROFILES = {
+            "4k": {"height": 2160, "bitrate": "12000k", "maxrate": "16000k", "bufsize": "24000k", "crf": "20"},
+            "2160p": {"height": 2160, "bitrate": "12000k", "maxrate": "16000k", "bufsize": "24000k", "crf": "20"},
+            "1080p": {"height": 1080, "bitrate": "4200k", "maxrate": "5500k", "bufsize": "8000k", "crf": "22"},
+            "720p": {"height": 720, "bitrate": "2000k", "maxrate": "2600k", "bufsize": "4000k", "crf": "23"},
+            "480p": {"height": 480, "bitrate": "800k", "maxrate": "1100k", "bufsize": "1600k", "crf": "25"},
+            "360p": {"height": 360, "bitrate": "400k", "maxrate": "550k", "bufsize": "800k", "crf": "27"},
         }
-        if quality and quality.lower() in scale_map:
-            cmd.extend(["-vf", scale_map[quality.lower()]])
 
+        q_key = quality.lower() if quality else None
+        profile = QUALITY_PROFILES.get(q_key)
+
+        if profile is not None:
+            # Explicit scaling requested
+            target_h = profile["height"]
+            scale_filter = f"scale=-2:'min(ih,{target_h})'"
+            cmd.extend([
+                "-vf", scale_filter,
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-tune", "zerolatency",
+                "-crf", profile["crf"],
+                "-b:v", profile["bitrate"],
+                "-maxrate", profile["maxrate"],
+                "-bufsize", profile["bufsize"],
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac",
+                "-ac", "2",
+                "-b:a", "192k",
+            ])
+        elif strategy == "remux":
+            # Fast container remux without any re-encoding (e.g. MKV with H.264 + AAC)
+            cmd.extend([
+                "-c:v", "copy",
+                "-c:a", "copy",
+            ])
+        elif strategy == "transcode_audio":
+            # Copy compatible video, transcode only audio
+            cmd.extend([
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-ac", "2",
+                "-b:a", "256k",
+            ])
+        else:
+            # Full transcode for incompatible codecs (HEVC, VC-1, MPEG2, 10-bit, HDR)
+            cmd.extend([
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-tune", "zerolatency",
+                "-crf", "22",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac",
+                "-ac", "2",
+                "-b:a", "192k",
+            ])
+
+        # Output fragmented MP4 over stdout
         cmd.extend([
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-tune", "zerolatency",
-            "-crf", "23",
-            "-pix_fmt", "yuv420p",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-ac", "2",
             "-f", "mp4",
             "-movflags", "frag_keyframe+empty_moov+default_base_moof",
             "pipe:1"
@@ -278,12 +447,12 @@ class MediaEngine:
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            bufsize=1024 * 64
+            bufsize=64 * 1024
         )
 
     @staticmethod
     def get_video_thumbnail(file_path: Path, max_size: int = 480) -> Optional[bytes]:
-        """Extracts a video frame at 10% duration or first second and caches it."""
+        """Extracts a video frame at 10% duration or first 3 seconds and caches it."""
         if not file_path.exists() or not file_path.is_file():
             return None
 
@@ -305,7 +474,7 @@ class MediaEngine:
 
             frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
-            
+
             target_frame = min(int(fps * 3), max(0, int(frame_count * 0.10)))
             cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
 
@@ -334,98 +503,6 @@ class MediaEngine:
         except Exception as e:
             print(f"Error extracting video thumbnail from {file_path}: {e}")
             return None
-
-    @staticmethod
-    def create_transcode_process(
-        file_path: Path,
-        start_sec: float = 0.0,
-        audio_stream_idx: Optional[int] = None,
-        quality: Optional[str] = None
-    ) -> subprocess.Popen:
-        """
-        Creates an FFmpeg subprocess that outputs browser-compliant fragmented MP4
-        (H.264 + AAC Stereo) over stdout for real-time video playback.
-        Optionally scales video resolution (4k/2160p, 1080p, 720p, 480p, 360p).
-        """
-        probe = MediaEngine.probe_media(file_path)
-        video_codec = probe.get("videoCodec", "").lower()
-        source_height = probe.get("height", 0)
-
-        cmd = [MediaEngine.get_ffmpeg_cmd()]
-
-        # Fast keyframe seek before input
-        if start_sec > 0:
-            cmd.extend(["-ss", f"{start_sec:.2f}"])
-
-        cmd.extend([
-            "-i", str(file_path.resolve()),
-            "-map", "0:v:0",
-        ])
-
-        # Map audio track
-        if audio_stream_idx is not None:
-            cmd.extend(["-map", f"0:{audio_stream_idx}"])
-        else:
-            cmd.extend(["-map", "0:a:0?"])
-
-        # Determine Quality Scaling Profile
-        QUALITY_PROFILES = {
-            "4k": {"height": 2160, "bitrate": "12000k", "maxrate": "16000k", "bufsize": "24000k", "crf": "20"},
-            "2160p": {"height": 2160, "bitrate": "12000k", "maxrate": "16000k", "bufsize": "24000k", "crf": "20"},
-            "1080p": {"height": 1080, "bitrate": "4200k", "maxrate": "5500k", "bufsize": "8000k", "crf": "22"},
-            "720p": {"height": 720, "bitrate": "2000k", "maxrate": "2600k", "bufsize": "4000k", "crf": "23"},
-            "480p": {"height": 480, "bitrate": "800k", "maxrate": "1100k", "bufsize": "1600k", "crf": "25"},
-            "360p": {"height": 360, "bitrate": "400k", "maxrate": "550k", "bufsize": "800k", "crf": "27"},
-        }
-
-        q_key = quality.lower() if quality else None
-        profile = QUALITY_PROFILES.get(q_key)
-
-        # Video encoding strategy
-        if profile is not None:
-            # Explicit quality requested by user (e.g. 480p, 720p, 1080p, 4K)
-            target_h = profile["height"]
-            scale_filter = f"scale=-2:'min(ih,{target_h})'"
-            cmd.extend([
-                "-vf", scale_filter,
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-tune", "zerolatency",
-                "-crf", profile["crf"],
-                "-b:v", profile["bitrate"],
-                "-maxrate", profile["maxrate"],
-                "-bufsize", profile["bufsize"],
-                "-pix_fmt", "yuv420p",
-            ])
-        elif video_codec in ("h264", "avc", "avc1"):
-            # Auto / Original resolution and native H.264: zero-CPU direct stream copy
-            cmd.extend(["-c:v", "copy"])
-        else:
-            # Auto / Original resolution for non-native video codecs (HEVC, VP9, etc.)
-            cmd.extend([
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-tune", "zerolatency",
-                "-crf", "22",
-                "-pix_fmt", "yuv420p",
-            ])
-
-        # Always convert audio to AAC stereo (compatible with all browsers & TVs)
-        cmd.extend([
-            "-c:a", "aac",
-            "-ac", "2",
-            "-b:a", "192k",
-            "-f", "mp4",
-            "-movflags", "frag_keyframe+empty_moov+default_base_moof",
-            "-"
-        ])
-
-        return subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            bufsize=64 * 1024
-        )
 
     @staticmethod
     def get_embedded_subtitle_vtt(file_path: Path, stream_index: int) -> str:
@@ -484,7 +561,7 @@ class MediaEngine:
 
     @staticmethod
     def convert_srt_to_vtt(srt_content: str) -> str:
-        """Converts SubRip (.srt) to WebVTT with UTF-8 support."""
+        """Converts SubRip (.srt) to WebVTT with Unicode UTF-8 support (English, Hindi, etc.)."""
         vtt = ["WEBVTT\n"]
         pattern = re.compile(r"(\d{2}:\d{2}:\d{2}),(\d{3})")
         converted = pattern.sub(r"\1.\2", srt_content)
