@@ -14,6 +14,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-emerald?style=for-the-badge" alt="License MIT" /></a>
   <a href="https://github.com/anhsumankumar/PhoneDrive"><img src="https://img.shields.io/badge/Android-15%2B%20(API%2035)-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android" /></a>
   <a href="https://github.com/anhsumankumar/PhoneDrive"><img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows" /></a>
+  <a href="https://github.com/anhsumankumar/PhoneDrive"><img src="https://img.shields.io/badge/macOS-12%2B%20(Apple%20Silicon%20%7C%20Intel)-000000?style=for-the-badge&logo=apple&logoColor=white" alt="macOS" /></a>
   <a href="https://github.com/anhsumankumar/PhoneDrive"><img src="https://img.shields.io/badge/React-19.0-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React" /></a>
   <a href="https://github.com/anhsumankumar/PhoneDrive"><img src="https://img.shields.io/badge/FastAPI-0.139-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" /></a>
   <a href="https://github.com/anhsumankumar/PhoneDrive"><img src="https://img.shields.io/badge/Tailwind-CSS%20v4-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white" alt="Tailwind" /></a>
@@ -23,13 +24,14 @@
 
 ## ⚡ Direct Downloads (Latest v1.0.0)
 
-Get the latest pre-compiled binaries for Android and Windows PC:
+Get the latest pre-compiled binaries for Android, Windows PC, and macOS (MacBook & Mac):
 
 | Platform | Download | Package Details |
 | :--- | :--- | :--- |
 | 📱 **Android Phone** | [📥 **Download PhoneDrive-v1.0.0.apk**](https://github.com/anhsumankumar/PhoneDrive/releases/download/v1.0.0/PhoneDrive-v1.0.0.apk) | `APK` • Android 8.0+ up to Android 15 • No root required |
 | 💻 **Windows PC (Portable Package)** | [📥 **Download PhoneDrive-PC-v1.0.0.zip**](https://github.com/anhsumankumar/PhoneDrive/releases/download/v1.0.0/PhoneDrive-PC-v1.0.0.zip) | `ZIP` • Windows 10 & 11 (64-bit) • Extract & Run • No setup required |
 | 💻 **Windows PC (Direct Binary)** | [📥 **Download PhoneDrive-PC-v1.0.0.exe**](https://github.com/anhsumankumar/PhoneDrive/releases/download/v1.0.0/PhoneDrive-PC-v1.0.0.exe) | `EXE` • Standalone executable binary |
+| 🍎 **macOS (MacBook & Mac)** | [📥 **Download PhoneDrive-macOS-v1.0.0.dmg**](https://github.com/anhsumankumar/PhoneDrive/releases/download/v1.0.0/PhoneDrive-macOS-v1.0.0.dmg) | `DMG` • macOS 12+ (Apple Silicon M1-M4 & Intel) • Drag-to-install disk image |
 | 🌐 **Web Dashboard** | Open `http://<device-ip>:8080` in any browser | Chrome, Edge, Safari, Firefox, Tablet, Smart TV |
 
 ---
