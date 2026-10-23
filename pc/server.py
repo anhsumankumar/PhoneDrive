@@ -182,12 +182,14 @@ async def add_folder(request: Request):
     p = Path(path)
     if not p.exists() or not p.is_dir():
         return JSONResponse(status_code=400, content={"success": False, "error": "Folder path does not exist on PC"})
+    db.set_setting("folders_initialized", "1")
     folder = db.add_folder(name or p.name, str(p))
     return {"success": True, "data": folder}
 
 @app.delete("/api/v1/folders/{folder_id}")
 async def remove_folder(folder_id: str, request: Request):
     require_auth(request)
+    db.set_setting("folders_initialized", "1")
     removed = db.remove_folder(folder_id)
     return {"success": removed, "data": None}
 

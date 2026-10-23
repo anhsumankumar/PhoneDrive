@@ -68,18 +68,27 @@ class MainWindow(QMainWindow):
         self._setup_tray()
 
     def _ensure_default_folders(self):
-        """Adds user's standard media folders on first run if none configured."""
+        """Adds user's standard media folders only on the very first fresh launch."""
+        is_initialized = self.db.get_setting("folders_initialized", "0") == "1"
+        if is_initialized:
+            return
+
+        # If user already has folders configured, mark initialized so we don't re-add defaults if later deleted
         existing = self.db.get_folders()
-        if not existing:
-            home = Path.home()
-            defaults = [
-                ("Pictures", home / "Pictures"),
-                ("Videos", home / "Videos"),
-                ("Documents", home / "Documents"),
-            ]
-            for name, path in defaults:
-                if path.exists():
-                    self.db.add_folder(name, str(path))
+        if existing:
+            self.db.set_setting("folders_initialized", "1")
+            return
+
+        # Brand-new fresh install: add standard folders once, then mark initialized
+        self.db.set_setting("folders_initialized", "1")
+        home = Path.home()
+        defaults = [
+            ("Videos", home / "Videos"),
+            ("Documents", home / "Documents"),
+        ]
+        for name, path in defaults:
+            if path.exists():
+                self.db.add_folder(name, str(path))
 
     def _init_ui(self):
         self.setWindowTitle("PhoneDrive PC — Personal Cloud & Cinema Server")
@@ -577,10 +586,12 @@ class MainWindow(QMainWindow):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Folder to Share with PhoneDrive")
         if dir_path:
             p = Path(dir_path)
+            self.db.set_setting("folders_initialized", "1")
             self.db.add_folder(p.name, str(p))
             self.refresh_folders_list()
 
     def remove_folder(self, folder_id: str):
+        self.db.set_setting("folders_initialized", "1")
         self.db.remove_folder(folder_id)
         self.refresh_folders_list()
 
