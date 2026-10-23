@@ -105,6 +105,7 @@ class MediaEngine:
         except Exception:
             cache_key = None
 
+        is_mp4_family = file_path.suffix.lower() in (".mp4", ".m4v", ".webm", ".mov")
         result = {
             "durationMs": 0,
             "width": 0,
@@ -113,7 +114,7 @@ class MediaEngine:
             "fps": 24.0,
             "videoCodec": "",
             "audioCodec": "",
-            "isBrowserNative": False,
+            "isBrowserNative": is_mp4_family,
             "audioTracks": [],
             "subtitleTracks": [],
         }
@@ -219,6 +220,66 @@ class MediaEngine:
         return result
 
     get_media_metadata = probe_media
+
+    @staticmethod
+    def create_transcode_process(
+        file_path: Path,
+        start_sec: float = 0.0,
+        audio_stream_idx: Optional[int] = None,
+        quality: Optional[str] = None
+    ) -> subprocess.Popen:
+        """Launches an asynchronous FFmpeg process streaming fragmented MP4 to stdout."""
+        ffmpeg_bin = MediaEngine.get_ffmpeg_cmd()
+        cmd = [
+            ffmpeg_bin,
+            "-hide_banner",
+            "-loglevel", "error",
+            "-y",
+        ]
+
+        if start_sec > 0:
+            cmd.extend(["-ss", f"{start_sec:.2f}"])
+
+        cmd.extend(["-i", str(file_path.resolve())])
+
+        # Map video
+        cmd.extend(["-map", "0:v:0"])
+
+        # Map audio
+        if audio_stream_idx is not None and audio_stream_idx >= 0:
+            cmd.extend(["-map", f"0:a:{audio_stream_idx}?"])
+        else:
+            cmd.extend(["-map", "0:a:0?"])
+
+        # Scale if quality requested
+        scale_map = {
+            "480p": "scale=-2:480",
+            "720p": "scale=-2:720",
+            "1080p": "scale=-2:1080",
+        }
+        if quality and quality.lower() in scale_map:
+            cmd.extend(["-vf", scale_map[quality.lower()]])
+
+        cmd.extend([
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-tune", "zerolatency",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-ac", "2",
+            "-f", "mp4",
+            "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+            "pipe:1"
+        ])
+
+        return subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=1024 * 64
+        )
 
     @staticmethod
     def get_video_thumbnail(file_path: Path, max_size: int = 480) -> Optional[bytes]:

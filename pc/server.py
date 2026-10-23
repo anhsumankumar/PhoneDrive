@@ -612,37 +612,40 @@ async def stream_media(
     # Stream real-time browser-compatible fragmented MP4 (H.264 + AAC Stereo)
     should_transcode = (not is_native and not force_direct) or (transcode == "1") or has_specific_quality
     if should_transcode:
-        proc = MediaEngine.create_transcode_process(
-            file_path,
-            start_sec=start,
-            audio_stream_idx=audioTrack,
-            quality=quality
-        )
+        try:
+            proc = MediaEngine.create_transcode_process(
+                file_path,
+                start_sec=start,
+                audio_stream_idx=audioTrack,
+                quality=quality
+            )
 
-        def iter_stream():
-            try:
-                while True:
-                    chunk = proc.stdout.read(64 * 1024)
-                    if not chunk:
-                        break
-                    yield chunk
-            finally:
+            def iter_stream():
                 try:
-                    proc.terminate()
-                    proc.wait(timeout=0.5)
-                except Exception:
+                    while True:
+                        chunk = proc.stdout.read(64 * 1024)
+                        if not chunk:
+                            break
+                        yield chunk
+                finally:
                     try:
-                        proc.kill()
+                        proc.terminate()
+                        proc.wait(timeout=0.5)
                     except Exception:
-                        pass
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
 
-        headers = {
-            "Content-Type": "video/mp4",
-            "Accept-Ranges": "none",
-            "Cache-Control": "no-cache, no-store",
-            "X-Content-Type-Options": "nosniff",
-        }
-        return StreamingResponse(iter_stream(), media_type="video/mp4", headers=headers)
+            headers = {
+                "Content-Type": "video/mp4",
+                "Accept-Ranges": "none",
+                "Cache-Control": "no-cache, no-store",
+                "X-Content-Type-Options": "nosniff",
+            }
+            return StreamingResponse(iter_stream(), media_type="video/mp4", headers=headers)
+        except Exception as e:
+            print(f"[!] Transcoding failed ({e}), falling back to direct stream: {file_path}")
 
     # Native browser MP4 direct streaming with Range 206
     stat = file_path.stat()

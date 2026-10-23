@@ -50,8 +50,8 @@ export const CinematicVideoPlayer: React.FC<CinematicVideoPlayerProps> = ({
   const [isBuffering, setIsBuffering] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Transcoding & Compatibility Mode
-  const isNonNativeFile = (media as any).isBrowserNative === false || media.name.toLowerCase().endsWith('.mkv')
+  // Transcoding & Compatibility Mode: Only non-native containers (.mkv, .avi, .wmv, .flv, .ts) require transcode by default
+  const isNonNativeFile = ['.mkv', '.avi', '.wmv', '.flv', '.ts'].some((ext) => media.name.toLowerCase().endsWith(ext))
   const [useCompatibilityMode, setUseCompatibilityMode] = useState<boolean>(isNonNativeFile)
   const [streamOffset, setStreamOffset] = useState<number>(0)
   const [autoRetryCount, setAutoRetryCount] = useState<number>(0)
@@ -848,6 +848,18 @@ export const CinematicVideoPlayer: React.FC<CinematicVideoPlayerProps> = ({
               })
               setStreamSrc(newUrl)
               video.src = newUrl
+              video.load()
+              video.play().catch(() => {})
+            }
+          } else if (autoRetryCount < 2) {
+            // Second fallback: direct content URL from file manager endpoint
+            setAutoRetryCount(2)
+            showToast('Switching to Direct Content Stream...')
+            const directFileUrl = api.getContentUrl(media.id)
+            setStreamSrc(directFileUrl)
+            const video = videoRef.current
+            if (video) {
+              video.src = directFileUrl
               video.load()
               video.play().catch(() => {})
             }
