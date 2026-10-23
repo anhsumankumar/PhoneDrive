@@ -162,7 +162,27 @@ python pc/build_exe.py
 ```
 The packaged standalone executable will be generated at `pc/dist/PhoneDrive-PC/PhoneDrive-PC.exe`.
 
+### 4. macOS Application & DMG
+```bash
+pip install -r pc/requirements.txt
+pip install pyinstaller pillow
+python pc/build_mac.py
+```
+The packaged disk image will be generated at `release-assets/PhoneDrive-macOS-v1.0.0.dmg`.
+
 ---
+
+## 🍎 macOS Installation & Gatekeeper Note
+
+Since PhoneDrive is a community open-source project without Apple's $99/year developer signature, macOS Gatekeeper attaches an internet quarantine flag to downloaded apps.
+
+1. **Mount DMG:** Double click `PhoneDrive-macOS-v1.0.0.dmg` and drag `PhoneDrive.app` into `/Applications`.
+2. **First Run:** Right-click (or Control-click) `PhoneDrive.app` in `/Applications` and select **Open**, then click **Open** on the confirmation dialog.
+3. **If macOS reports "PhoneDrive is damaged and can't be opened":**
+   Simply run this one-line command in your Mac's **Terminal** to clear the quarantine attribute:
+   ```bash
+   xattr -cr /Applications/PhoneDrive.app
+   ```
 
 ## 🔒 Privacy & Security Commitment
 
